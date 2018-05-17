@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <atomic>
 #include <tbb/parallel_for.h>
+#include <cmath>
 
 struct rgb8_t {
   std::uint8_t r;
@@ -41,9 +42,6 @@ rgb8_t heat_lut(float x)
     auto b = static_cast<std::uint8_t>((1.f - x) / x0 * 255);
     return rgb8_t{255, b, 0};
   }
-  else
-    return rgb8_t{0, 0, 0};
-
 }
 
 
@@ -54,16 +52,16 @@ void render(std::byte* buffer,
             int n_iterations)
 {
   std::byte *buffer2 = buffer + (height - 1) * stride;
-  int *histogram = (int*)calloc(n_iterations, sizeof(int));
-  int *iterations = (int*)calloc(height * width, sizeof(int));
+  std::vector<int> histogram(n_iterations + 1, 0);
+  std::vector<int> iterations(width * height + 1, 0);
 
 
-  for (auto y = 0; y < height / 2 + 1; ++y)
+  for (auto y = 0; y < height / 2.f; ++y)
   {
-    float y0 = y * 2 / float(height - 1) - 1;
+    float y0 = y * 2.f / (height - 1.f) - 1.f;
     for (auto x = 0; x < width; ++x)
     {
-      float x0 = x * 3.5 / float(width - 1) - 2.5;
+      float x0 = x * 3.5f / (width - 1.f) - 2.5f;
       float v = 0;
       float w = 0;
       int it = n_iterations;
@@ -83,7 +81,7 @@ void render(std::byte* buffer,
   for (auto i = 0; i < n_iterations; ++i)
       total += histogram[i];
 
-  for (auto y = 0; y < height / 2 + 1; ++y)
+  for (auto y = 0; y < height / 2.f; ++y)
   {
       rgb8_t* lineptr = reinterpret_cast<rgb8_t*>(buffer);
       rgb8_t* lineptr_sym = reinterpret_cast<rgb8_t*>(buffer2);
@@ -98,10 +96,9 @@ void render(std::byte* buffer,
           else
           {
               float hue = 0;
-              int top = curr_it + 1;
-              if (top % 2 == 0)
+              if ((curr_it + 1) % 2 == 0)
               {
-                  for (auto i = 0; i != top; i += 2)
+                  for (auto i = 0; i <= curr_it; i += 2)
                   {
                     hue += histogram[i];
                     hue += histogram[i + 1];
@@ -109,13 +106,12 @@ void render(std::byte* buffer,
               }
               else
               {
-                  for (auto i = 0; i != top; ++i)
+                  for (auto i = 0; i <= curr_it; ++i)
                     hue += histogram[i];
               }
-              rgb8_t heat = heat_lut(hue / total);
+              rgb8_t heat = heat_lut(hue / (float)total);
               lineptr[x] = heat;
-              if (y != height / 2)
-                  lineptr_sym[x] = heat;
+              lineptr_sym[x] = heat;
           }
       }
       buffer += stride;
@@ -136,12 +132,12 @@ void render_mt(std::byte* buffer,
 
   std::vector<int> iterations(height*width);
 
-  tbb::parallel_for(0, height / 2 + 1, 1, [&](int y)
+  tbb::parallel_for(0, int(std::ceil(height / 2.f)), 1, [&](int y)
   {
-    float y0 = y * 2 / float(height - 1) - 1;
+    float y0 = y * 2.f / (height - 1.f) - 1.f;
     for (auto x = 0; x < width; ++x)
     {
-      float x0 = x * 3.5 / float(width - 1) - 2.5;
+      float x0 = x * 3.5f / (width - 1.f) - 2.5f;
       float v = 0;
       float w = 0;
       int it = n_iterations;
@@ -160,13 +156,13 @@ void render_mt(std::byte* buffer,
   std::atomic<int> total = 0;
   tbb::parallel_for (0, n_iterations, 1, [&](auto i) {total += histogram[i];});
 
-  tbb::parallel_for(0, height / 2 + 1, 1, [&](auto y) {
+  tbb::parallel_for(0, int(std::ceil(height / 2.f)), 1, [&](auto y) {
       for (auto x = 0; x < width; ++x)
       {
           rgb8_t *str = reinterpret_cast<rgb8_t*>(buffer + y * stride + x * sizeof(rgb8_t));
           rgb8_t *str_sym = reinterpret_cast<rgb8_t*>(buffer + (height - 1) * stride + x * sizeof(rgb8_t) - y * stride);
-          int top = iterations[y * width + x];
-          if (top == n_iterations)
+          int curr_it = iterations[y * width + x];
+          if (curr_it == n_iterations)
           {
               *str = rgb8_t{0,0,0};
               *str_sym = rgb8_t{0,0,0};
@@ -174,9 +170,9 @@ void render_mt(std::byte* buffer,
           else
           {
               float hue = 0;
-              if ((top + 1) % 2 == 0)
+              if ((curr_it + 1) % 2 == 0)
               {
-                  for (auto i = 0; i != top + 1; i += 2)
+                  for (auto i = 0; i <= curr_it; i += 2)
                   {
                     hue += histogram[i];
                     hue += histogram[i + 1];
@@ -184,10 +180,10 @@ void render_mt(std::byte* buffer,
               }
               else
               {
-                  for (auto i = 0; i != top + 1; ++i)
+                  for (auto i = 0; i <= curr_it; ++i)
                     hue += histogram[i];
               }
-              rgb8_t heat = heat_lut(hue / total);
+              rgb8_t heat = heat_lut(hue / (float)total);
               *str_sym = heat;
               *str = heat;
           }
