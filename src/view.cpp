@@ -29,7 +29,7 @@ int main(int argc, char** argv)
   // Rendering
   auto img = SDL_CreateRGBSurfaceWithFormat(0, width, height, 24, SDL_PIXELFORMAT_RGB24);
   SDL_LockSurface(img);
-  render(static_cast<std::byte*>(img->pixels), width, height, img->pitch);
+  render_mt(static_cast<std::byte*>(img->pixels), width, height, img->pitch);
   SDL_UnlockSurface(img);
 
 

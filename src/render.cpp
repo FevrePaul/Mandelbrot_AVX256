@@ -7,6 +7,7 @@
 #include <atomic>
 #include <tbb/parallel_for.h>
 #include <cmath>
+#include <immintrin.h>
 
 struct rgb8_t {
   std::uint8_t r;
@@ -46,6 +47,16 @@ rgb8_t heat_lut(float x)
 }
 
 
+__m256 scalable_x(int off, int width)
+{
+    auto x = _mm256_set1_ps(0.0f);
+    auto x0 = _mm256_set1_ps(0.0f);
+    for (int i = 0; i < 8 && off + i < width; ++i)
+        x[i] = off + i;
+    x0 = x * 3.5f / (width - 1.f) - 2.5f;
+    return x0;
+}
+
 void render(std::byte* buffer,
             int width,
             int height,
@@ -56,31 +67,50 @@ void render(std::byte* buffer,
   std::vector<int> histogram(n_iterations + 4, 0);
   std::vector<int> iterations(width * height + 1, 0);
 
-
   for (auto y = 0; y < height / 2.f; ++y)
   {
     float y0 = y * 2.f / (height - 1.f) - 1.f;
-    for (auto x = 0; x < width; ++x)
+    for (auto x = 0; x < width; x += 8)
     {
-      float x0 = x * 3.5f / (width - 1.f) - 2.5f;
-      float v = 0;
-      float w = 0;
-      int it = n_iterations;
-      do
+      auto x0 = scalable_x(x, width);
+      auto v = _mm256_set1_ps(0.0f);
+      auto w = _mm256_set1_ps(0.0f);
+      auto mask = _mm256_set1_ps(1.0f);
+      auto it = _mm256_set1_ps(0.0f);
+      for (int i = 0; i < n_iterations; ++i)
       {
-          float vtemp = v * v - w * w + x0;
-          w = 2 * v * w + y0;
+          it = _mm256_and_ps(mask, _mm256_set1_ps(1.0f)) + it;
+          auto vtemp = v * v - w * w + x0;
+          w = _mm256_set1_ps(2.0f) * v * w + y0;
           v = vtemp;
-      } while (--it && v * v + w * w < 4);
-      int curr_iter = n_iterations - it;
-      iterations[y * width + x] = curr_iter;
-      histogram[curr_iter]++;
+          mask = (v * v + w * w) < _mm256_set1_ps(4.0f);
+          if (!_mm256_movemask_ps(mask))
+              break;
+      }
+      for (int i = 0; i < 8; ++i)
+      {
+          if (x + i < width)
+          {
+              iterations[y * width + x + i] = it[i];
+              histogram[it[i]]++;
+          }
+      }
     }
   }
 
   int total = 0;
   for (auto i = 0; i < n_iterations; ++i)
       total += histogram[i];
+
+  std::vector<float> hues(n_iterations, 0);
+  float hue = 0.0f;
+
+  for (auto i = 0; i < n_iterations; ++i)
+  {
+      hue += histogram[i];
+      hues[i] = hue;
+  }
+
 
   for (auto y = 0; y < height / 2.f; ++y)
   {
@@ -96,21 +126,7 @@ void render(std::byte* buffer,
           }
           else
           {
-              float hue = 0;
-              auto i = 0;
-              for (; i <= curr_it; i += 4)
-              {
-                hue += histogram[i];
-                hue += histogram[i + 1];
-                hue += histogram[i + 2];
-                hue += histogram[i + 3];
-              }
-              auto bound = i - (curr_it + 1);
-
-              for (auto x = i - bound; x < i; ++x)
-                hue -= histogram[x];
-
-              rgb8_t heat = heat_lut(hue / (float)total);
+              rgb8_t heat = heat_lut(hues[curr_it] / (float)total);
               lineptr[x] = heat;
               lineptr_sym[x] = heat;
           }
@@ -136,26 +152,45 @@ void render_mt(std::byte* buffer,
   tbb::parallel_for(0, int(std::ceil(height / 2.f)), 1, [&](int y)
   {
     float y0 = y * 2.f / (height - 1.f) - 1.f;
-    for (auto x = 0; x < width; ++x)
+    for (auto x = 0; x < width; x += 8)
     {
-      float x0 = x * 3.5f / (width - 1.f) - 2.5f;
-      float v = 0;
-      float w = 0;
-      int it = n_iterations;
-      do
+      auto x0 = scalable_x(x, width);
+      auto v = _mm256_set1_ps(0.0f);
+      auto w = _mm256_set1_ps(0.0f);
+      auto mask = _mm256_set1_ps(1.0f);
+      auto it = _mm256_set1_ps(0.0f);
+      for (int i = 0; i < n_iterations; ++i)
       {
-          float vtemp = v * v - w * w + x0;
-          w = 2 * v * w + y0;
+          it = _mm256_and_ps(mask, _mm256_set1_ps(1.0f)) + it;
+          auto vtemp = v * v - w * w + x0;
+          w = _mm256_set1_ps(2.0f) * v * w + y0;
           v = vtemp;
-      } while (--it && v * v + w * w < 4);
-      auto nb_it = n_iterations - it;
-      iterations[y * width + x] = nb_it;
-      histogram[nb_it]++;
+          mask = (v * v + w * w) < _mm256_set1_ps(4.0f);
+          if (!_mm256_movemask_ps(mask))
+              break;
+      }
+      for (int i = 0; i < 8; ++i)
+      {
+          if (x + i < width)
+          {
+              iterations[y * width + x + i] = it[i];
+              histogram[it[i]]++;
+          }
+      }
     }
   });
 
   std::atomic<int> total = 0;
   tbb::parallel_for (0, n_iterations, 1, [&](auto i) {total += histogram[i];});
+
+  std::vector<float> hues(n_iterations, 0);
+  float hue = 0.0f;
+
+  for (auto i = 0; i < n_iterations; ++i)
+  {
+      hue += histogram[i];
+      hues[i] = hue;
+  }
 
   tbb::parallel_for(0, int(std::ceil(height / 2.f)), 1, [&](auto y) {
       for (auto x = 0; x < width; ++x)
@@ -170,21 +205,7 @@ void render_mt(std::byte* buffer,
           }
           else
           {
-              float hue = 0;
-              auto i = 0;
-              for (; i <= curr_it; i += 4)
-              {
-                hue += histogram[i];
-                hue += histogram[i + 1];
-                hue += histogram[i + 2];
-                hue += histogram[i + 3];
-              }
-              auto bound = i - (curr_it + 1);
-
-              for (auto x = i - bound; x < i; ++x)
-                hue -= histogram[x];
-
-              rgb8_t heat = heat_lut(hue / (float)total);
+               rgb8_t heat = heat_lut(hues[curr_it] / (float)total);
               *str_sym = heat;
               *str = heat;
           }
