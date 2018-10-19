@@ -1,0 +1,19 @@
+####### Mandelbrot optimisations CPP #######
+
+This is a school project aiming to teach us single threaded optimisations.
+
+Thanks to AVX256 we can optimise our mandelbrot without using more than one thread.
+
+We compare the result with the use of threads AND AVX256. For the threads I used the TBB library.
+
+
+
+####### To test it #######
+
+mkdir build; cd build; cmake .. -DCMAKE_BUILD_TYPE=Release; make; ./bench
+
+The bench will test the program with threads and without threads.
+
+
+
+author: paul.fevre@epita.fr
