@@ -26,4 +26,3 @@ link_directories(/usr/lib)
 
 add_executable(bench src/bench.cpp)
 target_link_libraries(bench renderer benchmark::benchmark tbb)
-target_link_libraries(bench renderer benchmark::benchmark tbb)
