@@ -38,7 +38,7 @@ endif()
 # Check that everything is ok
 # ---------------------------
 include(FindPackageHandleStandardArgs)
-find_package_handle_standard_args(Benchmark DEFAULT_MSG BENCHMARK_INCLUDE_DIR BENCHMARK_LIBRARIES)
+find_package_handle_standard_args(benchmark DEFAULT_MSG BENCHMARK_INCLUDE_DIR BENCHMARK_LIBRARIES)
 
 mark_as_advanced(
     BENCHMARK_INCLUDE_DIR
